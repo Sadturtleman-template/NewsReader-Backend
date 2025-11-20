@@ -39,9 +39,9 @@ commit을 허용하지 않습니다.
 ## CI / CD
 
 ### github action workflow
-1. auto-assigned bot             
-2. pr-template bot                   
-3. update CHANGELOG.md
+1. auto-assigned bot - PR 시에 자동으로 assign member을 자동으로 추가합니다.
+2. pr-template bot - PR 시에 자동으로 PR 템플릿을 제공합니다.
+3. update CHANGELOG.md - PR 시에 자동으로 변경 내역을 작성합니다.
 
 
 ## Backend Server
