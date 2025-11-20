@@ -40,22 +40,58 @@ jobs:
             PR_URL="${{ github.event.pull_request.html_url }}"
             AUTHOR="${{ github.event.pull_request.user.login }}"
 
+            BASE_SHA=${{ github.event.pull_request.base.sha }}
+            PR_BRANCH="pr-${PR_NUMBER}"
+
+            ADDED=$(git diff --diff-filter=A --name-only "$BASE_SHA" "$PR_BRANCH")
+            MODIFIED=$(git diff --diff-filter=M --name-only "$BASE_SHA" "$PR_BRANCH")
+            DELETED=$(git diff --diff-filter=D --name-only "$BASE_SHA" "$PR_BRANCH")
+
             {
             printf "\n"
             printf "### [%s (#%s)](%s)\n" "$PR_TITLE" "$PR_NUMBER" "$PR_URL"
-            printf "- Merged on: %s\n" "$(date +'%Y-%m-%d')"
-            printf "- Author: %s\n" "$AUTHOR"
+            printf "%s\n" "- Merged on: $(date +'%Y-%m-%d')"
+            printf "%s\n" "- Author: ${AUTHOR}"
             printf "\n"
 
-            printf "<details>\n"
-            printf "<summary>Changed files</summary>\n\n"
+            #########################################################################
+            # Added
+            #########################################################################
+            if [ -n "$ADDED" ]; then
+                printf "<details>\n"
+                printf "<summary>Added</summary>\n\n"
+                while IFS= read -r FILE; do
+                printf "%s\n" "- ${FILE}"
+                done <<< "$ADDED"
+                printf "\n</details>\n\n"
+            fi
 
-            while IFS= read -r FILE; do
-                printf "- %s\n" "$FILE"
-            done <<< "${{ steps.changed-files.outputs.changed_files }}"
+            #########################################################################
+            # Modified
+            #########################################################################
+            if [ -n "$MODIFIED" ]; then
+                printf "<details>\n"
+                printf "<summary>Modified</summary>\n\n"
+                while IFS= read -r FILE; do
+                printf "%s\n" "- ${FILE}"
+                done <<< "$MODIFIED"
+                printf "\n</details>\n\n"
+            fi
 
-            printf "\n</details>\n\n"
+            #########################################################################
+            # Deleted
+            #########################################################################
+            if [ -n "$DELETED" ]; then
+                printf "<details>\n"
+                printf "<summary>Deleted</summary>\n\n"
+                while IFS= read -r FILE; do
+                printf "%s\n" "- ${FILE}"
+                done <<< "$DELETED"
+                printf "\n</details>\n\n"
+            fi
+
             } >> CHANGELOG.md
+
 
 
       - name: Commit and push changes
