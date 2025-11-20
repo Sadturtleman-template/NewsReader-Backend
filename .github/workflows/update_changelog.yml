@@ -1,11 +1,11 @@
-name: Update Multi-Service Changelog & Version
+name: Update Logs & Changelogs
 
 on:
   pull_request:
     types: [closed]
 
 jobs:
-  changelog:
+  update-logs:
     if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
 
@@ -14,7 +14,7 @@ jobs:
         uses: actions/checkout@v3
 
       ###########################################################
-      # Get all changed files using tj-actions
+      # Get all changed files (safest)
       ###########################################################
       - name: Get PR changed files
         id: changes
@@ -29,7 +29,7 @@ jobs:
           SERVICES=""
           for file in ${{ steps.changes.outputs.all_changed_files }}; do
             if [[ "$file" == lib/*/* ]]; then
-              SERVICE=$(echo $file | cut -d'/' -f2)
+              SERVICE=$(echo "$file" | cut -d'/' -f2)
               SERVICES="$SERVICES $SERVICE"
             fi
           done
@@ -37,85 +37,102 @@ jobs:
           UNIQUE=$(printf "%s\n" $SERVICES | sort -u)
           echo "SERVICES=$UNIQUE" >> $GITHUB_ENV
 
-      - name: Print detected services
-        run: |
-          echo "Changed services: ${{ env.SERVICES }}"
-
       ###########################################################
-      # Case A → No service changed = Project structure change
-      ###########################################################
-      - name: Update project_log.md
-        if: ${{ env.SERVICES == '' }}
-        run: |
-          echo "## Project Update - ${{ github.event.pull_request.merged_at }}" > proj.md
-          echo "- **${{ github.event.pull_request.title }}** (#${{ github.event.pull_request.number }})" >> proj.md
-          echo "- Changed files:" >> proj.md
-          for f in ${{ steps.changes.outputs.all_changed_files }}; do
-            echo "  - $f" >> proj.md
-          done
-          echo "" >> proj.md
-          echo "---" >> proj.md
-          echo "" >> proj.md
-
-          if [ -f project_log.md ]; then
-            cat project_log.md >> proj.md
-          fi
-
-          mv proj.md project_log.md
-
-      ###########################################################
-      # Case B → Services changed → Process per-service logic
+      # Extract PR Information
       ###########################################################
       - name: Extract PR info
-        if: ${{ env.SERVICES != '' }}
         run: |
           echo "PR_TITLE=${{ github.event.pull_request.title }}" >> $GITHUB_ENV
           echo "PR_NUMBER=${{ github.event.pull_request.number }}" >> $GITHUB_ENV
           echo "PR_BODY=${{ github.event.pull_request.body }}" >> $GITHUB_ENV
           echo "AUTHOR=${{ github.event.pull_request.user.login }}" >> $GITHUB_ENV
-          echo "DATE=$(date +"%Y-%m-%d")" >> $GITHUB_ENV
+          echo "DATE=$(date '+%Y-%m-%d')" >> $GITHUB_ENV
+          echo "FILES='${{ steps.changes.outputs.all_changed_files }}'" >> $GITHUB_ENV
 
-      - name: Update each service
+      ###########################################################
+      # Determine PR Category
+      ###########################################################
+      - name: Determine PR category
+        run: |
+          TITLE="${{ env.PR_TITLE }}"
+
+          if [[ "$TITLE" == feat:* ]]; then
+            echo "CATEGORY=### ✨ Features" >> $GITHUB_ENV
+            echo "VERSION_BUMP=minor" >> $GITHUB_ENV
+          elif [[ "$TITLE" == fix:* ]]; then
+            echo "CATEGORY=### 🐞 Fixes" >> $GITHUB_ENV
+            echo "VERSION_BUMP=patch" >> $GITHUB_ENV
+          elif [[ "$TITLE" == docs:* ]]; then
+            echo "CATEGORY=### 📚 Docs" >> $GITHUB_ENV
+            echo "VERSION_BUMP=patch" >> $GITHUB_ENV
+          elif [[ "$TITLE" == refactor:* ]]; then
+            echo "CATEGORY=### 🛠 Refactor" >> $GITHUB_ENV
+            echo "VERSION_BUMP=patch" >> $GITHUB_ENV
+          elif [[ "$TITLE" == chore:* ]]; then
+            echo "CATEGORY=### ♻️ Chore" >> $GITHUB_ENV
+            echo "VERSION_BUMP=patch" >> $GITHUB_ENV
+          else
+            echo "CATEGORY=### 🔧 Misc" >> $GITHUB_ENV
+            echo "VERSION_BUMP=patch" >> $GITHUB_ENV
+          fi
+
+      ###########################################################
+      # Update project-level project_log.md ALWAYS
+      ###########################################################
+      - name: Update project-level log
+        run: |
+          TARGET="project_log.md"
+
+          echo "## ${{ env.DATE }} - PR #${{ env.PR_NUMBER }}" > new_log.md
+          echo "${{ env.CATEGORY }}" >> new_log.md
+          echo "- **${{ env.PR_TITLE }}** by @${{ env.AUTHOR }}" >> new_log.md
+          echo "" >> new_log.md
+
+          if [[ ! -z "${{ env.PR_BODY }}" ]]; then
+            echo "> ${{ env.PR_BODY }}" >> new_log.md
+            echo "" >> new_log.md
+          fi
+
+          echo "#### 🗂 Changed Files" >> new_log.md
+          for f in ${{ env.FILES }}; do
+            echo "- \`$f\`" >> new_log.md
+          done
+
+          echo "" >> new_log.md
+          echo "---" >> new_log.md
+          echo "" >> new_log.md
+
+          if [ -f "$TARGET" ]; then
+            cat "$TARGET" >> new_log.md
+          fi
+
+          mv new_log.md "$TARGET"
+
+      ###########################################################
+      # If services changed → update each service
+      ###########################################################
+      - name: Update affected services
         if: ${{ env.SERVICES != '' }}
         run: |
           IFS=' ' read -ra SERVICE_LIST <<< "${{ env.SERVICES }}"
 
           for SERVICE in "${SERVICE_LIST[@]}"; do
-            echo "Processing service: $SERVICE"
+            echo "Processing $SERVICE ..."
+
             VERSION_FILE="lib/$SERVICE/VERSION"
-            CHANGELOG_FILE="lib/$SERVICE/CHANGELOG.md"
+            CHANGELOG="lib/$SERVICE/CHANGELOG.md"
 
-            TITLE="${{ env.PR_TITLE }}"
-            if [[ $TITLE == feat:* ]]; then
-              CATEGORY="### ✨ Features"
-              BUMP="minor"
-            elif [[ $TITLE == fix:* ]]; then
-              CATEGORY="### 🐞 Fixes"
-              BUMP="patch"
-            elif [[ $TITLE == docs:* ]]; then
-              CATEGORY="### 📚 Docs"
-              BUMP="patch"
-            elif [[ $TITLE == refactor:* ]]; then
-              CATEGORY="### 🛠 Refactor"
-              BUMP="patch"
-            elif [[ $TITLE == chore:* ]]; then
-              CATEGORY="### ♻️ Chore"
-              BUMP="patch"
-            else
-              CATEGORY="### 🔧 Misc"
-              BUMP="patch"
-            fi
-
+            # init version if missing
             if [ ! -f "$VERSION_FILE" ]; then
               echo "0.1.0" > "$VERSION_FILE"
             fi
 
-            VERSION=$(cat $VERSION_FILE)
-            MAJOR=$(echo $VERSION | cut -d. -f1)
-            MINOR=$(echo $VERSION | cut -d. -f2)
-            PATCH=$(echo $VERSION | cut -d. -f3)
+            VERSION=$(cat "$VERSION_FILE")
+            MAJOR=$(echo "$VERSION" | cut -d. -f1)
+            MINOR=$(echo "$VERSION" | cut -d. -f2)
+            PATCH=$(echo "$VERSION" | cut -d. -f3)
 
-            if [[ "$BUMP" == "minor" ]]; then
+            if [[ "${{ env.VERSION_BUMP }}" == "minor" ]]; then
               MINOR=$((MINOR + 1))
               PATCH=0
             else
@@ -125,25 +142,33 @@ jobs:
             NEW_VERSION="$MAJOR.$MINOR.$PATCH"
             echo "$NEW_VERSION" > "$VERSION_FILE"
 
-            echo "## v$NEW_VERSION - ${{ env.DATE }}" > new.md
-            echo "$CATEGORY" >> new.md
-            echo "- **${{ env.PR_TITLE }}** (#${{ env.PR_NUMBER }}) by @${{ env.AUTHOR }}" >> new.md
-            echo "" >> new.md
+            # Write service changelog
+            echo "## v$NEW_VERSION - ${{ env.DATE }}" > new_cl.md
+            echo "${{ env.CATEGORY }}" >> new_cl.md
+            echo "- **${{ env.PR_TITLE }}** (#${{ env.PR_NUMBER }}) by @${{ env.AUTHOR }}" >> new_cl.md
+            echo "" >> new_cl.md
 
             if [[ ! -z "${{ env.PR_BODY }}" ]]; then
-              echo "> ${{ env.PR_BODY }}" >> new.md
-              echo "" >> new.md
+              echo "> ${{ env.PR_BODY }}" >> new_cl.md
+              echo "" >> new_cl.md
             fi
 
-            echo "---" >> new.md
-            echo "" >> new.md
+            echo "#### 🗂 Changed Files" >> new_cl.md
+            for f in ${{ env.FILES }}; do
+              if [[ "$f" == "lib/$SERVICE/"* ]]; then
+                echo "- \`$f\`" >> new_cl.md
+              fi
+            done
 
-            if [ -f "$CHANGELOG_FILE" ]; then
-              cat "$CHANGELOG_FILE" >> new.md
+            echo "" >> new_cl.md
+            echo "---" >> new_cl.md
+            echo "" >> new_cl.md
+
+            if [ -f "$CHANGELOG" ]; then
+              cat "$CHANGELOG" >> new_cl.md
             fi
 
-            mv new.md "$CHANGELOG_FILE"
-
+            mv new_cl.md "$CHANGELOG"
           done
 
       ###########################################################
@@ -153,8 +178,8 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add lib/*/VERSION || true
-          git add lib/*/CHANGELOG.md || true
-          git add project_log.md || true
-          git commit -m "Auto-update changelogs / version / project log (PR #${{ github.event.pull_request.number }})" || echo "nothing to commit"
-          git push || echo "nothing to push"
+          git add project_log.md
+          git add lib/*/VERSION
+          git add lib/*/CHANGELOG.md
+          git commit -m "Update logs & changelogs (PR #${{ env.PR_NUMBER }})" || echo "No changes"
+          git push || echo "Nothing to push"
