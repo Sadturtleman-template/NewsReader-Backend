@@ -6,6 +6,7 @@ NewsReader Backend source입니다. 새로운 기술을 적용하기 위한 레�
 # Backend Server
 
 framework: Django
+
 package manager: uv
 
 # RSS Server
