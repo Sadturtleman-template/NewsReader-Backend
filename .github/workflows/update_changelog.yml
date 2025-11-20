@@ -1,0 +1,149 @@
+name: Update Multi-Service Changelog & Version
+
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  changelog:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      ###########################################################
+      # Detect modified services inside lib/<service>/*
+      ###########################################################
+      - name: Detect modified services
+        id: detect
+        run: |
+          CHANGED=$(git diff --name-only HEAD~1)
+
+          SERVICES=()
+          for file in $CHANGED; do
+            if [[ "$file" == lib/*/* ]]; then
+              SERVICE=$(echo $file | cut -d'/' -f2)
+              SERVICES+=("$SERVICE")
+            fi
+          done
+
+          # Unique service list
+          UNIQUE_SERVICES=($(printf "%s\n" "${SERVICES[@]}" | sort -u))
+
+          echo "SERVICES=${UNIQUE_SERVICES[*]}" >> $GITHUB_ENV
+
+      - name: Debug changed services
+        run: |
+            echo "Modified services: ${{ env.SERVICES }}"
+
+      - name: Stop if no service changed
+        if: ${{ env.SERVICES == '' }}
+        run: echo "No services modified; skipping."
+
+      ###########################################################
+      # Extract PR info
+      ###########################################################
+      - name: Extract PR info
+        run: |
+          echo "PR_TITLE=${{ github.event.pull_request.title }}" >> $GITHUB_ENV
+          echo "PR_NUMBER=${{ github.event.pull_request.number }}" >> $GITHUB_ENV
+          echo "PR_BODY=${{ github.event.pull_request.body }}" >> $GITHUB_ENV
+          echo "AUTHOR=${{ github.event.pull_request.user.login }}" >> $GITHUB_ENV
+          echo "DATE=$(date +"%Y-%m-%d")" >> $GITHUB_ENV
+
+      ###########################################################
+      # Loop through all changed services
+      ###########################################################
+      - name: Process services
+        run: |
+          IFS=' ' read -ra SERVICE_LIST <<< "${{ env.SERVICES }}"
+
+          for SERVICE in "${SERVICE_LIST[@]}"; do
+            echo "Processing $SERVICE..."
+
+            VERSION_FILE="lib/$SERVICE/VERSION"
+            CHANGELOG_FILE="lib/$SERVICE/CHANGELOG.md"
+
+            ######################################################
+            # Determine category & version bump type
+            ######################################################
+            TITLE="${{ env.PR_TITLE }}"
+            if [[ "$TITLE" == feat:* ]]; then
+              CATEGORY="### ✨ Features"
+              BUMP="minor"
+            elif [[ "$TITLE" == fix:* ]]; then
+              CATEGORY="### 🐞 Fixes"
+              BUMP="patch"
+            elif [[ "$TITLE" == docs:* ]]; then
+              CATEGORY="### 📚 Docs"
+              BUMP="patch"
+            elif [[ "$TITLE" == refactor:* ]]; then
+              CATEGORY="### 🛠 Refactor"
+              BUMP="patch"
+            elif [[ "$TITLE" == chore:* ]]; then
+              CATEGORY="### ♻️ Chore"
+              BUMP="patch"
+            else
+              CATEGORY="### 🔧 Misc"
+              BUMP="patch"
+            fi
+
+            ######################################################
+            # Read & bump version
+            ######################################################
+            if [ ! -f "$VERSION_FILE" ]; then
+              echo "0.1.0" > "$VERSION_FILE"
+            fi
+
+            VERSION=$(cat "$VERSION_FILE")
+            MAJOR=$(echo $VERSION | cut -d. -f1)
+            MINOR=$(echo $VERSION | cut -d. -f2)
+            PATCH=$(echo $VERSION | cut -d. -f3)
+
+            if [[ "$BUMP" == "minor" ]]; then
+              MINOR=$((MINOR + 1))
+              PATCH=0
+            else
+              PATCH=$((PATCH + 1))
+            fi
+
+            NEW_VERSION="$MAJOR.$MINOR.$PATCH"
+            echo "$NEW_VERSION" > "$VERSION_FILE"
+
+            ######################################################
+            # Write CHANGELOG
+            ######################################################
+            echo "## v$NEW_VERSION - ${{ env.DATE }}" > new_cl.md
+            echo "$CATEGORY" >> new_cl.md
+            echo "- **${{ env.PR_TITLE }}** (#${{ env.PR_NUMBER }}) by @${{ env.AUTHOR }}" >> new_cl.md
+            echo "" >> new_cl.md
+
+            if [ ! -z "${{ env.PR_BODY }}" ]; then
+              echo "> ${{ env.PR_BODY }}" >> new_cl.md
+              echo "" >> new_cl.md
+            fi
+
+            echo "---" >> new_cl.md
+            echo "" >> new_cl.md
+
+            if [ -f "$CHANGELOG_FILE" ]; then
+              cat "$CHANGELOG_FILE" >> new_cl.md
+            fi
+
+            mv new_cl.md "$CHANGELOG_FILE"
+
+          done
+
+      ###########################################################
+      # Commit & push changes
+      ###########################################################
+      - name: Commit changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add lib/*/CHANGELOG.md
+          git add lib/*/VERSION
+          git commit -m "Auto-update multi-service versions & changelogs (PR #${{ env.PR_NUMBER }})"
+          git push
