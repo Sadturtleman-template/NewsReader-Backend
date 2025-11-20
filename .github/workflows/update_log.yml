@@ -38,11 +38,14 @@ jobs:
           {
             echo ""
             echo "### PR #${{ github.event.pull_request.number }} (merged on $(date +'%Y-%m-%d'))"
+            echo "PR Title: ${{ github.event.pull_request.title }}"
             echo "Author: ${{ github.event.pull_request.user.login }}"
+            echo "PR Link: ${{ github.event.pull_request.html_url }}"
+            echo "Changes:"
             echo ""
-            for FILE in ${{ steps.changed-files.outputs.changed_files }}; do
-              echo "- Modified: $FILE"
-            done
+            while IFS= read -r FILE; do
+                echo "- Modified: $FILE"
+            done <<< "${{ steps.changed-files.outputs.changed_files }}"
             echo ""
           } >> CHANGELOG.md
 
